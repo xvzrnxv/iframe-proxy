@@ -4,28 +4,22 @@ import { JSDOM } from "jsdom";
 
 const app = express();
 
-app.use(express.text({ type: "*/*" }));
-
-// Helper: rewrite absolute & relative links to point back through proxy
+// Rewrite links so all loads go through the proxy
 function rewriteHtml(html, baseUrl, proxyUrl) {
   const dom = new JSDOM(html);
   const document = dom.window.document;
 
-  // Rewrite <a>, <script>, <link>, <img>, <iframe>
-  const selectors = ["a", "script", "link", "img", "iframe", "source"];
-  selectors.forEach((sel) => {
-    document.querySelectorAll(sel).forEach((el) => {
-      let attr = "href";
-      if (sel !== "a" && sel !== "link") attr = "src";
-      const val = el.getAttribute(attr);
-      if (!val) return;
-
-      try {
-        const url = new URL(val, baseUrl).href;
-        el.setAttribute(attr, proxyUrl + encodeURIComponent(url));
-      } catch (e) {
-        // ignore invalid URLs
-      }
+  // Update tag attributes to proxy
+  ["a", "link", "img", "script", "iframe", "source"].forEach(tag => {
+    document.querySelectorAll(tag).forEach(el => {
+      ["href", "src"].forEach(attr => {
+        const val = el.getAttribute(attr);
+        if (!val) return;
+        try {
+          const absolute = new URL(val, baseUrl).href;
+          el.setAttribute(attr, proxyUrl + encodeURIComponent(absolute));
+        } catch {}
+      });
     });
   });
 
@@ -37,26 +31,18 @@ app.get("/proxy", async (req, res) => {
   if (!target) return res.status(400).send("Missing ?url=");
 
   try {
-    const response = await fetch(target, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119 Safari/537.36",
-      },
+    const resp = await fetch(target, {
+      headers: { "User-Agent": "Mozilla/5.0" }
     });
+    const contentType = resp.headers.get("content-type") || "";
 
-    let body = await response.text();
+    let body = await resp.text();
 
-    const contentType = response.headers.get("content-type") || "text/html";
     res.setHeader("Content-Type", contentType);
     res.setHeader("Cache-Control", "no-cache");
 
-    // If HTML → rewrite
     if (contentType.includes("text/html")) {
-      body = rewriteHtml(
-        body,
-        target,
-        `${req.protocol}://${req.get("host")}/proxy?url=`
-      );
+      body = rewriteHtml(body, target, `${req.protocol}://${req.get("host")}/proxy?url=`);
     }
 
     res.send(body);
@@ -65,5 +51,5 @@ app.get("/proxy", async (req, res) => {
   }
 });
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Rewriting proxy running on ${port}`));
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Rewriting proxy running on port ${PORT}`));
