@@ -15,7 +15,11 @@ app.get("/proxy", async (req, res) => {
     let body = await response.text();
     const contentType = response.headers.get("content-type") || "text/html";
 
-    // If HTML, rewrite relative links → proxied absolute links
+    // 🔥 Strip iframe-blocking headers
+    res.removeHeader("x-frame-options");
+    res.removeHeader("content-security-policy");
+
+    // Rewrite relative links → proxied links
     if (contentType.includes("text/html")) {
       const baseUrl = new URL(target).origin;
 
