@@ -58,6 +58,7 @@
 <script>
 let favorites=[];
 
+// ✅ Use your deployed proxy
 const PROXY = "https://iframe-proxy-cxaj.onrender.com/proxy?url=";
 
 let games = [
@@ -110,7 +111,7 @@ function render(list,id){
     div.innerHTML=`
       <div class="row"><img src="${g.img}" style="width:40px;height:40px;border-radius:6px"><strong>${g.name}</strong></div>
       <div class="row">
-        <button class="btn green" onclick="openInTab('${g.name}','${g.url}')">Play</button>
+        <button class="btn green" onclick="openInTab('${g.name}','${g.url}')">Open</button>
         <span class="star ${isFav?'filled':''}" onclick="toggleFavorite('${g.name}')">${isFav?'⭐':'☆'}</span>
       </div>`;
     el.appendChild(div);
@@ -152,7 +153,7 @@ function refresh(){
   } else if(activeTab==="Favorites"){
     document.getElementById("mainView").innerHTML=`
       <section class="card" style="margin:16px;flex:1;">
-        <h2>Favorite Games</h2>
+        <h2>Favorites</h2>
         <div class="content"><div class="list" id="favGamesList"></div></div>
       </section>`;
     render(favorites,"favGamesList");
