@@ -1,17 +1,17 @@
 {
   "name": "iframe-proxy",
   "version": "1.0.0",
-  "description": "A simple proxy server to bypass web filters",
+  "description": "HTML-rewriting iframe proxy",
   "main": "server.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
+    "cheerio": "^1.0.0-rc.12",
+    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "http-proxy-middleware": "^2.0.6",
-    "helmet": "^6.0.1",
-    "cors": "^2.8.5"
-  },
-  "author": "",
-  "license": "ISC"
+    "helmet": "^6.2.0",
+    "node-fetch": "^2.6.12"
+  }
 }
