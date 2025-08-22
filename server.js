@@ -6,7 +6,7 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Disable X-Frame-Options from helmet
+// Security middleware (disable frameguard so we can iframe)
 app.use(
   helmet({
     frameguard: false,
@@ -15,17 +15,20 @@ app.use(
 
 app.use(cors());
 
-// 🔥 Serve static (your index.html)
+// Serve your static files (index.html, etc.)
 app.use(express.static('public'));
 
-// 🔥 Catch ALL routes and proxy them
+// ✅ Proxy everything under /proxy/ to HDToday
 app.use(
-  '/',
+  '/proxy',
   createProxyMiddleware({
-    target: 'https://hdtodayz.to', // <-- default site
+    target: 'https://hdtodayz.to',
     changeOrigin: true,
-    selfHandleResponse: false,
     ws: true,
+    pathRewrite: (path, req) => {
+      // remove "/proxy" prefix so links keep working
+      return path.replace(/^\/proxy/, '');
+    },
     onProxyReq: (proxyReq, req, res) => {
       proxyReq.setHeader(
         'User-Agent',
@@ -36,19 +39,16 @@ app.use(
         'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
       );
     },
-    onProxyRes: (proxyRes, req, res) => {
-      // Strip iframe-breaking headers
+    onProxyRes: (proxyRes) => {
       delete proxyRes.headers['x-frame-options'];
       delete proxyRes.headers['content-security-policy'];
-    },
-    pathRewrite: (path, req) => {
-      // Keep the same path the user clicks
-      return path;
     },
   })
 );
 
-// Start server
+// Health check
+app.get('/health', (req, res) => res.send('OK'));
+
 app.listen(port, () => {
-  console.log(`Proxy server running on port ${port}`);
+  console.log(`Proxy running on port ${port}`);
 });
