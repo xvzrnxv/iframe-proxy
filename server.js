@@ -3,42 +3,34 @@ const helmet = require('helmet');
 const cors = require('cors');
 const cheerio = require('cheerio');
 const { URL } = require('url');
-const userAgent = require('user-agents'); // For random User-Agent generation
-const sanitizeHtml = require('sanitize-html'); // For sanitizing HTML
+const userAgent = require('user-agents');
+const sanitizeHtml = require('sanitize-html');
+const HttpsProxyAgent = require('https-proxy-agent');
 
 const app = express();
 const port = process.env.PORT || 3000;
+const agent = new HttpsProxyAgent('socks5h://127.0.0.1:9050'); // Tor proxy
 
-// Middleware to disable identifying headers and enforce HTTPS
+app.disable('x-powered-by');
 app.use(helmet({
-  frameguard: false, // Allow iframe embedding
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'none'"],
-      frameAncestors: ["'self'", '*'], // Allow framing from any origin
-      upgradeInsecureRequests: true // Enforce HTTPS
-    }
-  },
+  frameguard: false,
+  contentSecurityPolicy: { directives: { frameAncestors: ["'self'", '*'], upgradeInsecureRequests: true } },
   crossOriginEmbedderPolicy: false,
   crossOriginOpenerPolicy: false,
   crossOriginResourcePolicy: false,
-  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true } // Enforce HTTPS
+  hsts: { maxAge: 31536000 }
 }));
 app.use(cors({ origin: '*' }));
-app.disable('x-powered-by'); // Remove server fingerprint
-app.set('trust proxy', true); // Handle reverse proxies (e.g., behind Cloudflare)
 
-// Helper to inject client-side anti-tracking and rewriting script
-function injectAntiTrackingScript(req) {
+function antiBustScript(req) {
   const PREFIX = '/proxy?url=';
   return `
 <script>
 (function(){
-  const PREFIX = '${PREFIX}';
+  const PREFIX='${PREFIX}';
   const abs = (u) => { try { return new URL(u, location.href).href } catch(e){ return u } };
   const prox = (u) => { const a = abs(u); return a ? (PREFIX + encodeURIComponent(a)) : u };
 
-  // Rewrite URLs dynamically
   const rewriteNode = (el, attr) => {
     const v = el.getAttribute(attr);
     if (!v || /^(data|blob|javascript):/i.test(v)) return;
@@ -52,7 +44,6 @@ function injectAntiTrackingScript(req) {
     });
   };
 
-  // Observe DOM changes
   new MutationObserver(muts => {
     muts.forEach(m => {
       if (m.type === 'childList') scan();
@@ -62,46 +53,31 @@ function injectAntiTrackingScript(req) {
     });
   }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src','href','action'] });
 
-  // Anti-framebusting
   try {
-    Object.defineProperty(window, 'top', { get: () => window });
-    Object.defineProperty(window, 'parent', { get: () => window });
-  } catch(e) {}
-
-  // Rewrite navigation
+    Object.defineProperty(window,'top',{get:()=>window});
+    Object.defineProperty(window,'parent',{get:()=>window});
+  } catch(e){}
   const wrapState = (fn) => new Proxy(fn, { apply: (t, th, [a,b,url]) => Reflect.apply(t, th, [a,b, url ? prox(url) : url]) });
   try {
     history.pushState = wrapState(history.pushState);
     history.replaceState = wrapState(history.replaceState);
-  } catch(e) {}
-
-  // Rewrite window.open
+  } catch(e){}
   window.open = (u, t) => { location.href = prox(u || location.href); return null; };
 
-  // Disable tracking APIs
+  // Anti-tracking
   Object.defineProperty(navigator, 'userAgent', { get: () => '${new userAgent().toString()}' });
   Object.defineProperty(navigator, 'webdriver', { get: () => false });
-  window.localStorage && (window.localStorage.clear());
-  window.sessionStorage && (window.sessionStorage.clear());
-  Object.defineProperty(navigator, 'geolocation', { get: () => undefined });
-  if (window.RTCPeerConnection) window.RTCPeerConnection = undefined;
+  window.localStorage && window.localStorage.clear();
+  window.sessionStorage && window.sessionStorage.clear();
+  Object.defineProperty(document, 'cookie', { get: () => '', set: () => {} });
 
-  // Block cookies
-  Object.defineProperty(document, 'cookie', {
-    get: () => '',
-    set: () => {}
-  });
-
-  // Initial scan
   document.addEventListener('DOMContentLoaded', scan);
 })();
 </script>`;
 }
 
-// Health check
 app.get('/health', (req, res) => res.send('OK'));
 
-// Proxy endpoint
 app.get('/proxy', async (req, res) => {
   const target = req.query.url;
   if (!target || !/^https?:\/\//.test(target)) {
@@ -112,12 +88,13 @@ app.get('/proxy', async (req, res) => {
   try {
     upstream = await fetch(target, {
       redirect: 'follow',
+      agent, // Route through Tor
       headers: {
-        'User-Agent': new userAgent().toString(), // Randomize User-Agent
+        'User-Agent': new userAgent().toString(),
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': '', // Strip Referer
-        'Origin': new URL(target).origin // Match target origin
+        'Referer': '',
+        'Origin': new URL(target).origin
       }
     });
   } catch (e) {
@@ -127,35 +104,23 @@ app.get('/proxy', async (req, res) => {
   const status = upstream.status;
   const ct = upstream.headers.get('content-type') || '';
 
-  // Set headers to allow framing and prevent caching
   res.setHeader('X-Frame-Options', 'ALLOWALL');
   res.setHeader('Content-Security-Policy', "frame-ancestors *; upgrade-insecure-requests");
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   if (ct.includes('text/html')) {
     let html = await upstream.text();
-    
-    // Sanitize HTML to remove trackers and malicious scripts
     html = sanitizeHtml(html, {
-      allowedTags: sanitizeHtml.defaults.allowedTags.concat(['iframe', 'meta']),
-      allowedAttributes: {
-        ...sanitizeHtml.defaults.allowedAttributes,
-        iframe: ['src'],
-        '*': ['href', 'src', 'action']
-      },
-      disallowedTagsMode: 'discard',
+      allowedTags: sanitizeHtml.defaults.allowedTags.concat(['iframe']),
+      allowedAttributes: { '*': ['href', 'src', 'action'], iframe: ['src'] },
       transformTags: {
         '*': (tagName, attribs) => {
-          if (attribs.src || attribs.href || attribs.action) {
-            const attr = attribs.src ? 'src' : attribs.href ? 'href' : 'action';
-            const value = attribs[attr];
-            if (value && !/^(data|blob|javascript):/i.test(value)) {
-              const baseURL = new URL(target);
-              const abs = () => { try { return new URL(value, baseURL).toString(); } catch { return value; } };
-              const prox = (u) => `/proxy?url=${encodeURIComponent(u)}`;
-              attribs[attr] = prox(abs());
-            }
+          const attr = attribs.src || attribs.href || attribs.action;
+          if (attr && !/^(data|blob|javascript):/i.test(attr)) {
+            const baseURL = new URL(target);
+            const abs = () => { try { return new URL(attr, baseURL).toString(); } catch { return attr; } };
+            attribs[attr.includes('action') ? 'action' : attribs.href ? 'href' : 'src'] = `/proxy?url=${encodeURIComponent(abs())}`;
           }
           return { tagName, attribs };
         }
@@ -163,49 +128,20 @@ app.get('/proxy', async (req, res) => {
     });
 
     const $ = cheerio.load(html, { decodeEntities: false });
-
-    // Remove tracking meta tags and scripts
     $('meta[http-equiv="Content-Security-Policy"]').remove();
     $('script').each((_, el) => {
       const src = $(el).attr('src');
-      if (src && /google-analytics|doubleclick|adsense|tracker/i.test(src)) {
-        $(el).remove();
-      }
+      if (src && /google-analytics|doubleclick|adsense|tracker/i.test(src)) $(el).remove();
     });
 
-    // Inject anti-tracking script
-    $('head').prepend(injectAntiTrackingScript(req));
-
+    $('head').prepend(antiBustScript(req));
     res.status(status).type('html').send($.html());
     return;
   }
 
-  // Non-HTML content (e.g., images, CSS, JS)
   const buf = Buffer.from(await upstream.arrayBuffer());
   res.status(status).set('Content-Type', ct || 'application/octet-stream').send(buf);
 });
 
-// Serve landing page
-app.get('/', (req, res) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Secure Proxy Browser</title>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <meta name="robots" content="noindex, nofollow">
-    </head>
-    <body>
-      <h1>Secure Proxy Browser</h1>
-      <p>Enter a URL to browse securely:</p>
-      <form action="/proxy" method="GET">
-        <input type="url" name="url" placeholder="https://example.com" required>
-        <button type="submit">Go</button>
-      </form>
-    </body>
-    </html>
-  `);
-});
-
-app.listen(port, () => console.log(`Secure proxy running on http://localhost:${port}`));
+app.use(express.static('public'));
+app.listen(port, () => console.log('proxy listening on ' + port));
