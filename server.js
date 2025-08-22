@@ -25,6 +25,7 @@ app.disable('x-powered-by');
 app.use(helmet({
   frameguard: false,
   contentSecurityPolicy: {
+    useDefaults: false,
     directives: {
       defaultSrc: ["*","'unsafe-inline'","'unsafe-eval'","data:"],
       frameAncestors: ["*"],
