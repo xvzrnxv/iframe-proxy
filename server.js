@@ -1,55 +1,45 @@
-import express from "express";
-import fetch from "node-fetch";
-import { JSDOM } from "jsdom";
+const express = require('express');
+const { createProxyMiddleware } = require('http-proxy-middleware');
+const helmet = require('helmet');
+const cors = require('cors');
 
 const app = express();
+const port = process.env.PORT || 3000;
 
-// Rewrite links so all loads go through the proxy
-function rewriteHtml(html, baseUrl, proxyUrl) {
-  const dom = new JSDOM(html);
-  const document = dom.window.document;
+// Security middleware
+app.use(helmet()); // Adds security headers
+app.use(cors()); // Enable CORS for iframe compatibility
+app.use(express.static('public')); // Serve static files (e.g., index.html)
 
-  // Update tag attributes to proxy
-  ["a", "link", "img", "script", "iframe", "source"].forEach(tag => {
-    document.querySelectorAll(tag).forEach(el => {
-      ["href", "src"].forEach(attr => {
-        const val = el.getAttribute(attr);
-        if (!val) return;
-        try {
-          const absolute = new URL(val, baseUrl).href;
-          el.setAttribute(attr, proxyUrl + encodeURIComponent(absolute));
-        } catch {}
-      });
-    });
-  });
-
-  return dom.serialize();
-}
-
-app.get("/proxy", async (req, res) => {
-  const target = req.query.url;
-  if (!target) return res.status(400).send("Missing ?url=");
-
-  try {
-    const resp = await fetch(target, {
-      headers: { "User-Agent": "Mozilla/5.0" }
-    });
-    const contentType = resp.headers.get("content-type") || "";
-
-    let body = await resp.text();
-
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Cache-Control", "no-cache");
-
-    if (contentType.includes("text/html")) {
-      body = rewriteHtml(body, target, `${req.protocol}://${req.get("host")}/proxy?url=`);
-    }
-
-    res.send(body);
-  } catch (err) {
-    res.status(500).send("Proxy error: " + err.message);
+// Proxy middleware
+app.use('/proxy', createProxyMiddleware({
+  target: 'https://', // Dynamic target based on query param
+  changeOrigin: true, // Changes Host header to match target
+  pathRewrite: (path, req) => {
+    const url = new URL(req.query.url);
+    return url.pathname + url.search; // Forward only path and query
+  },
+  onProxyReq: (proxyReq, req, res) => {
+    // Set headers to mimic browser behavior
+    proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    proxyReq.setHeader('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
+  },
+  onError: (err, req, res) => {
+    res.status(500).send('Proxy error: Unable to load content');
+  },
+  secure: true, // Enforce HTTPS
+  ws: true, // Support WebSockets for dynamic sites
+  router: (req) => {
+    return req.query.url; // Dynamically route to the requested URL
   }
+}));
+
+// Basic route for health check
+app.get('/', (req, res) => {
+  res.sendFile(__dirname + '/public/index.html');
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Rewriting proxy running on port ${PORT}`));
+// Start server
+app.listen(port, () => {
+  console.log(`Proxy server running on port ${port}`);
+});
