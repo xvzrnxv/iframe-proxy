@@ -1,7 +1,6 @@
 const express = require('express');
 const helmet = require('helmet');
 const cors = require('cors');
-const fetch = require('node-fetch');
 const cheerio = require('cheerio');
 const { URL } = require('url');
 
@@ -85,7 +84,7 @@ app.get('/proxy', async (req, res) => {
     res.setHeader('Content-Type', ct || 'application/octet-stream');
     res.removeHeader('x-frame-options');
     res.removeHeader('content-security-policy');
-    const buf = await upstream.buffer();
+    const buf = Buffer.from(await upstream.arrayBuffer());
     res.send(buf);
     return;
   }
