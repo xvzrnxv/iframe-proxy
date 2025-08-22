@@ -28,7 +28,7 @@ app.use(helmet({
     directives: {
       defaultSrc: ["*","'unsafe-inline'","'unsafe-eval'","data:"],
       frameAncestors: ["*"],
-      upgradeInsecureRequests: true
+      upgradeInsecureRequests: []
     }
   },
   crossOriginEmbedderPolicy: false,
