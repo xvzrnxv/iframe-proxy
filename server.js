@@ -6,7 +6,7 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Security middleware (disable frameguard so we can iframe)
+// Security middleware (disable frameguard so iframe works)
 app.use(
   helmet({
     frameguard: false,
@@ -15,31 +15,19 @@ app.use(
 
 app.use(cors());
 
-// Serve your static files (index.html, etc.)
+// Serve frontend files (index.html, etc.)
 app.use(express.static('public'));
 
-// ✅ Proxy everything under /proxy/ to HDToday
+// Proxy middleware for all /proxy/* requests
 app.use(
   '/proxy',
   createProxyMiddleware({
     target: 'https://hdtodayz.to',
     changeOrigin: true,
     ws: true,
-    pathRewrite: (path, req) => {
-      // remove "/proxy" prefix so links keep working
-      return path.replace(/^\/proxy/, '');
-    },
-    onProxyReq: (proxyReq, req, res) => {
-      proxyReq.setHeader(
-        'User-Agent',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      );
-      proxyReq.setHeader(
-        'Accept',
-        'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      );
-    },
+    pathRewrite: (path, req) => path.replace(/^\/proxy/, ''), // strip /proxy
     onProxyRes: (proxyRes) => {
+      // remove iframe-blocking headers
       delete proxyRes.headers['x-frame-options'];
       delete proxyRes.headers['content-security-policy'];
     },
@@ -49,6 +37,7 @@ app.use(
 // Health check
 app.get('/health', (req, res) => res.send('OK'));
 
+// Start server
 app.listen(port, () => {
   console.log(`Proxy running on port ${port}`);
 });
