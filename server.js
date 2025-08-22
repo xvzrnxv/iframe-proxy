@@ -69,7 +69,9 @@ app.get('/', (req, res) => {
 
 app.get('/proxy', async (req, res) => {
   const target = req.query.url;
-  if (!target || !/^https?:\\/\\//.test(target)) return res.status(400).type('text/plain').send('Invalid or missing URL');
+  if (!target || !(target.startsWith('http://') || target.startsWith('https://'))) {
+    return res.status(400).type('text/plain').send('Invalid or missing URL');
+  }
 
   let upstream;
   try {
