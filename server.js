@@ -6,57 +6,46 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Security middleware (disable frameguard so iframes work)
+// Security middleware (disable frameguard!)
 app.use(
   helmet({
-    frameguard: false, // 🔥 allow embedding in iframes
+    contentSecurityPolicy: false,
+    frameguard: false
   })
 );
-app.use(cors()); // Enable CORS for iframe compatibility
-app.use(express.static('public')); // Serve static files (e.g., index.html)
+
+app.use(cors());
+app.use(express.static('public'));
 
 // Proxy middleware
-app.use(
-  '/proxy',
-  createProxyMiddleware({
-    target: 'https://',
-    changeOrigin: true,
-    pathRewrite: (path, req) => {
-      const url = new URL(req.query.url);
-      return url.pathname + url.search;
-    },
-    onProxyReq: (proxyReq, req, res) => {
-      proxyReq.setHeader(
-        'User-Agent',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      );
-      proxyReq.setHeader(
-        'Accept',
-        'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-      );
-    },
-    onProxyRes: (proxyRes, req, res) => {
-      // 🔥 Strip iframe-blocking headers
-      delete proxyRes.headers['x-frame-options'];
-      delete proxyRes.headers['content-security-policy'];
-    },
-    onError: (err, req, res) => {
-      res.status(500).send('Proxy error: Unable to load content');
-    },
-    secure: true,
-    ws: true,
-    router: (req) => {
-      return req.query.url;
-    },
-  })
-);
+app.use('/proxy', createProxyMiddleware({
+  changeOrigin: true,
+  secure: false,
+  ws: true,
+  pathRewrite: (path, req) => {
+    const url = new URL(req.query.url);
+    return url.pathname + url.search;
+  },
+  router: (req) => req.query.url,
+  onProxyReq: (proxyReq) => {
+    proxyReq.setHeader('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)');
+    proxyReq.setHeader('Accept', 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8');
+  },
+  onProxyRes: (proxyRes) => {
+    // 🔥 Strip iframe-blocking headers
+    delete proxyRes.headers['x-frame-options'];
+    delete proxyRes.headers['content-security-policy'];
+  },
+  onError: (err, req, res) => {
+    res.status(500).send('Proxy error: ' + err.message);
+  }
+}));
 
-// Basic route for health check
+// Basic health check
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/public/index.html');
 });
 
-// Start server
 app.listen(port, () => {
-  console.log(`Proxy server running on port ${port}`);
+  console.log(`Proxy running on port ${port}`);
 });
