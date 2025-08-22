@@ -3,145 +3,209 @@ const helmet = require('helmet');
 const cors = require('cors');
 const cheerio = require('cheerio');
 const { URL } = require('url');
+const userAgent = require('user-agents'); // For random User-Agent generation
+const sanitizeHtml = require('sanitize-html'); // For sanitizing HTML
 
 const app = express();
 const port = process.env.PORT || 3000;
 
-app.disable('x-powered-by');
-
-// Keep CSP/frame headers off so we can embed in <iframe>
+// Middleware to disable identifying headers and enforce HTTPS
 app.use(helmet({
-  frameguard: false,
-  contentSecurityPolicy: false,
+  frameguard: false, // Allow iframe embedding
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'none'"],
+      frameAncestors: ["'self'", '*'], // Allow framing from any origin
+      upgradeInsecureRequests: true // Enforce HTTPS
+    }
+  },
   crossOriginEmbedderPolicy: false,
   crossOriginOpenerPolicy: false,
-  crossOriginResourcePolicy: false
+  crossOriginResourcePolicy: false,
+  hsts: { maxAge: 31536000, includeSubDomains: true, preload: true } // Enforce HTTPS
 }));
-app.use(cors());
+app.use(cors({ origin: '*' }));
+app.disable('x-powered-by'); // Remove server fingerprint
+app.set('trust proxy', true); // Handle reverse proxies (e.g., behind Cloudflare)
 
-// A tiny helper used inside the injected script
-function antiBustScript(req) {
-  // prefix used by the proxy itself
+// Helper to inject client-side anti-tracking and rewriting script
+function injectAntiTrackingScript(req) {
   const PREFIX = '/proxy?url=';
   return `
 <script>
 (function(){
-  const PREFIX='${PREFIX}';
-  const abs = (u) => { try { return new URL(u, location.href).href } catch(e){ return null } };
+  const PREFIX = '${PREFIX}';
+  const abs = (u) => { try { return new URL(u, location.href).href } catch(e){ return u } };
   const prox = (u) => { const a = abs(u); return a ? (PREFIX + encodeURIComponent(a)) : u };
 
-  // Rewrite existing links/resources
+  // Rewrite URLs dynamically
   const rewriteNode = (el, attr) => {
     const v = el.getAttribute(attr);
-    if (!v) return;
-    if (/^(data|blob|javascript):/i.test(v)) return;
+    if (!v || /^(data|blob|javascript):/i.test(v)) return;
     el.setAttribute(attr, prox(v));
   };
   const scan = () => {
-    document.querySelectorAll('[src]').forEach(e => rewriteNode(e,'src'));
-    document.querySelectorAll('[href]').forEach(e => rewriteNode(e,'href'));
-    document.querySelectorAll('form[action]').forEach(e => rewriteNode(e,'action'));
+    document.querySelectorAll('[src],[href],form[action]').forEach(e => {
+      if (e.hasAttribute('src')) rewriteNode(e, 'src');
+      if (e.hasAttribute('href')) rewriteNode(e, 'href');
+      if (e.hasAttribute('action')) rewriteNode(e, 'action');
+    });
   };
 
-  // Rewrite runtime changes too
+  // Observe DOM changes
   new MutationObserver(muts => {
     muts.forEach(m => {
-      if (m.type === 'childList') m.addedNodes.forEach(n => { if (n.nodeType===1) scan(); });
-      if (m.type === 'attributes' && (m.attributeName==='src'||m.attributeName==='href'||m.attributeName==='action')) {
+      if (m.type === 'childList') scan();
+      if (m.type === 'attributes' && ['src','href','action'].includes(m.attributeName)) {
         rewriteNode(m.target, m.attributeName);
       }
     });
-  }).observe(document.documentElement, { childList:true, subtree:true, attributes:true, attributeFilter:['src','href','action'] });
+  }).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['src','href','action'] });
 
-  // Kill common frame-busters
+  // Anti-framebusting
   try {
-    Object.defineProperty(window,'top',{get:()=>window});
-    Object.defineProperty(window,'parent',{get:()=>window});
-  } catch(e){}
+    Object.defineProperty(window, 'top', { get: () => window });
+    Object.defineProperty(window, 'parent', { get: () => window });
+  } catch(e) {}
 
-  // Keep SPA navigations inside the proxy
+  // Rewrite navigation
   const wrapState = (fn) => new Proxy(fn, { apply: (t, th, [a,b,url]) => Reflect.apply(t, th, [a,b, url ? prox(url) : url]) });
   try {
     history.pushState = wrapState(history.pushState);
     history.replaceState = wrapState(history.replaceState);
-  } catch(e){}
+  } catch(e) {}
 
-  // Rewrite window.open to stay proxied
+  // Rewrite window.open
   window.open = (u, t) => { location.href = prox(u || location.href); return null; };
 
-  // One-time initial pass
+  // Disable tracking APIs
+  Object.defineProperty(navigator, 'userAgent', { get: () => '${new userAgent().toString()}' });
+  Object.defineProperty(navigator, 'webdriver', { get: () => false });
+  window.localStorage && (window.localStorage.clear());
+  window.sessionStorage && (window.sessionStorage.clear());
+  Object.defineProperty(navigator, 'geolocation', { get: () => undefined });
+  if (window.RTCPeerConnection) window.RTCPeerConnection = undefined;
+
+  // Block cookies
+  Object.defineProperty(document, 'cookie', {
+    get: () => '',
+    set: () => {}
+  });
+
+  // Initial scan
   document.addEventListener('DOMContentLoaded', scan);
 })();
 </script>`;
 }
 
+// Health check
 app.get('/health', (req, res) => res.send('OK'));
 
-// Main proxy endpoint
+// Proxy endpoint
 app.get('/proxy', async (req, res) => {
   const target = req.query.url;
-  if (!target) { res.status(400).send('missing url'); return; }
+  if (!target || !/^https?:\/\//.test(target)) {
+    return res.status(400).send('Invalid or missing URL');
+  }
 
   let upstream;
   try {
     upstream = await fetch(target, {
       redirect: 'follow',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'User-Agent': new userAgent().toString(), // Randomize User-Agent
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9'
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': '', // Strip Referer
+        'Origin': new URL(target).origin // Match target origin
       }
     });
   } catch (e) {
-    res.status(502).send('fetch failed');
-    return;
+    return res.status(502).send('Fetch failed');
   }
 
   const status = upstream.status;
   const ct = upstream.headers.get('content-type') || '';
 
-  // Always allow framing *here*
+  // Set headers to allow framing and prevent caching
   res.setHeader('X-Frame-Options', 'ALLOWALL');
   res.setHeader('Content-Security-Policy', "frame-ancestors *; upgrade-insecure-requests");
-  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.setHeader('Access-Control-Allow-Origin', '*');
 
   if (ct.includes('text/html')) {
-    const html = await upstream.text();
+    let html = await upstream.text();
+    
+    // Sanitize HTML to remove trackers and malicious scripts
+    html = sanitizeHtml(html, {
+      allowedTags: sanitizeHtml.defaults.allowedTags.concat(['iframe', 'meta']),
+      allowedAttributes: {
+        ...sanitizeHtml.defaults.allowedAttributes,
+        iframe: ['src'],
+        '*': ['href', 'src', 'action']
+      },
+      disallowedTagsMode: 'discard',
+      transformTags: {
+        '*': (tagName, attribs) => {
+          if (attribs.src || attribs.href || attribs.action) {
+            const attr = attribs.src ? 'src' : attribs.href ? 'href' : 'action';
+            const value = attribs[attr];
+            if (value && !/^(data|blob|javascript):/i.test(value)) {
+              const baseURL = new URL(target);
+              const abs = () => { try { return new URL(value, baseURL).toString(); } catch { return value; } };
+              const prox = (u) => `/proxy?url=${encodeURIComponent(u)}`;
+              attribs[attr] = prox(abs());
+            }
+          }
+          return { tagName, attribs };
+        }
+      }
+    });
+
     const $ = cheerio.load(html, { decodeEntities: false });
 
-    // Make relative URLs absolute and wrap with /proxy?url=
-    const baseURL = new URL(target);
-    const abs = (u) => { try { return new URL(u, baseURL).toString(); } catch { return null; } };
-    const prox = (u) => { const a = abs(u); return a ? `/proxy?url=${encodeURIComponent(a)}` : u; };
-
-    ['a[href]','link[href]','script[src]','img[src]','iframe[src]','source[src]','video[src]','audio[src]','track[src]','form[action]']
-      .forEach(sel => $(sel).each((_, el) => {
-        const $el = $(el);
-        const attr = sel.includes('action') ? 'action' : (sel.includes('[href]') ? 'href' : 'src');
-        const v = $el.attr(attr);
-        if (!v || /^(data|blob|javascript):/i.test(v)) return;
-        const p = prox(v);
-        if (p) $el.attr(attr, p);
-      }));
-
-    // Remove CSP meta tags
+    // Remove tracking meta tags and scripts
     $('meta[http-equiv="Content-Security-Policy"]').remove();
-    $('meta[http-equiv="content-security-policy"]').remove();
+    $('script').each((_, el) => {
+      const src = $(el).attr('src');
+      if (src && /google-analytics|doubleclick|adsense|tracker/i.test(src)) {
+        $(el).remove();
+      }
+    });
 
-    // Inject anti-framebust + live-rewriter
-    $('head').prepend(antiBustScript(req));
+    // Inject anti-tracking script
+    $('head').prepend(injectAntiTrackingScript(req));
 
     res.status(status).type('html').send($.html());
     return;
   }
 
-  // Non-HTML response (images, css, js, video, etc.)
+  // Non-HTML content (e.g., images, CSS, JS)
   const buf = Buffer.from(await upstream.arrayBuffer());
   res.status(status).set('Content-Type', ct || 'application/octet-stream').send(buf);
 });
 
-// (optional) serve your landing/index if you host one here
-app.use(express.static('public'));
+// Serve landing page
+app.get('/', (req, res) => {
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Secure Proxy Browser</title>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <meta name="robots" content="noindex, nofollow">
+    </head>
+    <body>
+      <h1>Secure Proxy Browser</h1>
+      <p>Enter a URL to browse securely:</p>
+      <form action="/proxy" method="GET">
+        <input type="url" name="url" placeholder="https://example.com" required>
+        <button type="submit">Go</button>
+      </form>
+    </body>
+    </html>
+  `);
+});
 
-app.listen(port, () => console.log('proxy listening on ' + port));
+app.listen(port, () => console.log(`Secure proxy running on http://localhost:${port}`));
