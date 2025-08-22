@@ -41,8 +41,6 @@
     .popup{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:999;}
     .popup-box{background:var(--panel-2);padding:20px;border-radius:12px;display:flex;flex-direction:column;gap:12px;min-width:300px;text-align:center;}
     .popup-box button{margin:4px 0;}
-    #searchBar{display:flex;gap:8px;padding:8px;background:#11152b;border-bottom:1px solid var(--border);}
-    #searchInput{flex:1;padding:8px;border-radius:6px;border:none;}
   </style>
 </head>
 <body>
@@ -60,28 +58,47 @@
 <script>
 let favorites=[];
 
-// 🔥 IMPORTANT: update this to your Render app URL
 const PROXY = "https://iframe-proxy-cxaj.onrender.com/proxy?url=";
 
 let games = [
-  {name: "1v1.lol", img: "https://1v1lolunblocked.com/favicon.ico", url: PROXY + "https://1v1lolunblocked.com/games/1v1-lol/index.html"},
-  {name: "Run 3", img: "https://lablockedgames.com/favicon.ico", url: PROXY + "https://lablockedgames.com/funblocked/run-3/index.html"}
+  {
+    name: "1v1.lol",
+    img: "https://1v1lolunblocked.com/favicon.ico",
+    url: PROXY + "https://1v1lolunblocked.com/games/1v1-lol/index.html"
+  },
+  {
+    name: "Run 3",
+    img: "https://lablockedgames.com/favicon.ico",
+    url: PROXY + "https://lablockedgames.com/funblocked/run-3/index.html"
+  }
 ];
 
 let streams = [
-  {name: "HDToday", img: "https://hdtodayz.to/favicon.ico", url: PROXY + "https://hdtodayz.to/"}
+  {
+    name: "HDToday",
+    img: "https://hdtodayz.to/favicon.ico",
+    url: PROXY + "https://hdtodayz.to/"
+  }
 ];
 
 let music = [
-  {name: "YouTube Music", img: "https://www.youtube.com/s/desktop/6b5ebaa4/img/favicon_144x144.png", url: "https://music.youtube.com"}
+  {
+    name: "YouTube Music",
+    img: "https://www.youtube.com/s/desktop/6b5ebaa4/img/favicon_144x144.png",
+    url: "https://music.youtube.com"
+  }
 ];
 
 let socials = [
-  {name: "Discord", img: "https://discord.com/assets/2c21aeda16de354ba5334551a883b481.png", url: "https://discord.com"}
+  {
+    name: "Discord",
+    img: "https://discord.com/assets/2c21aeda16de354ba5334551a883b481.png",
+    url: "https://discord.com"
+  }
 ];
 
 let customLinks=[];
-let tabs=[{name:"Home",url:"home"},{name:"Search",url:"search"}];
+let tabs=[{name:"Home",url:"home"},{name:"Search",url:PROXY + "https://www.google.com"}];
 let activeTab="Home";
 let fullscreen=false;
 
@@ -102,7 +119,8 @@ function render(list,id){
 
 function refresh(){
   if(activeTab==="Home"){
-    document.getElementById("mainView").innerHTML=`<div style="display:flex;flex-direction:column;flex:1;min-height:0;">
+    document.getElementById("mainView").innerHTML=`
+    <div style="display:flex;flex-direction:column;flex:1;min-height:0;">
       <div class="main">
         <section class="card"><h2>Games</h2><div class="content"><div class="list" id="gamesList"></div></div></section>
         <section class="card"><h2>Streaming</h2><div class="content"><div class="list" id="streamList"></div></div></section>
@@ -116,73 +134,105 @@ function refresh(){
           <div class="list" id="customList"></div>
         </div></section>
       </div>
+      <section class="card" style="margin:8px;height:auto;flex:0;">
+        <h2>Site Settings</h2>
+        <div class="content" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+          <input id="tabTitleInput" type="text" placeholder="Tab Title">
+          <input id="tabIconInput" type="file" accept="image/*">
+          <button class="btn" onclick="openBlank()">Open Blank</button>
+          <button class="btn" style="background:var(--error)" onclick="deleteData()">Delete Data</button>
+        </div>
+      </section>
     </div>`;
-    render(games,"gamesList");render(streams,"streamList");render(music,"musicList");render(socials,"socialList");render(customLinks,"customList");
+    render(games,"gamesList");
+    render(streams,"streamList");
+    render(music,"musicList");
+    render(socials,"socialList");
+    render(customLinks,"customList");
   } else if(activeTab==="Favorites"){
-    document.getElementById("mainView").innerHTML=`<section class="card" style="margin:16px;flex:1;">
-      <h2>Favorite Games</h2><div class="content"><div class="list" id="favGamesList"></div></div></section>`;
+    document.getElementById("mainView").innerHTML=`
+      <section class="card" style="margin:16px;flex:1;">
+        <h2>Favorite Games</h2>
+        <div class="content"><div class="list" id="favGamesList"></div></div>
+      </section>`;
     render(favorites,"favGamesList");
-  } else if(activeTab==="Search"){
-    document.getElementById("mainView").innerHTML=`<div style="display:flex;flex-direction:column;height:100%;">
-      <div id="searchBar"><input id="searchInput" type="text" placeholder="Enter URL..." value="https://example.com">
-      <button class="btn green" onclick="loadSearch()">Go</button></div>
-      <iframe id="searchFrame" style="flex:1;border:none;width:100%;"></iframe></div>`;
-    document.getElementById("searchFrame").src=document.getElementById("searchInput").value;
   } else {
     let t=tabs.find(x=>x.name===activeTab);
-    if(t){document.getElementById("mainView").innerHTML=`<iframe id="siteFrame" class="${fullscreen?'fullscreen-iframe':'normal-iframe'}" src="${t.url}"></iframe>`;}
+    if(t){
+      document.getElementById("mainView").innerHTML=`
+        <iframe id="siteFrame" class="${fullscreen?'fullscreen-iframe':'normal-iframe'}" src="${t.url}"></iframe>`;
+    }
   }
-  renderTabs();renderProfileButtons();
-}
-
-function loadSearch(){
-  let url=document.getElementById("searchInput").value.trim();
-  if(!url.startsWith("http")) url="https://"+url;
-  document.getElementById("searchFrame").src=PROXY+url;
+  renderTabs();
+  renderProfileButtons();
 }
 
 function renderTabs(){
   let tabDiv=document.getElementById("tabs");tabDiv.innerHTML="";
   tabs.forEach(t=>{
     const div=document.createElement("div");div.className="tab"+(t.name===activeTab?" active":"");
-    div.innerHTML=t.name+(t.name!=="Home"&&t.name!=="Search"?`<span class="close" onclick="closeTab('${t.name}')">x</span>`:"");
+    div.innerHTML=t.name+(t.name!=="Home" && t.name!=="Search"?`<span class="close" onclick="closeTab('${t.name}')">x</span>`:"");
     div.onclick=()=>setActiveTab(t.name);
     tabDiv.appendChild(div);
   });
 }
 
 function renderProfileButtons(){
-  let p=document.getElementById("profile");p.innerHTML=`<button class="btn" onclick="openInTab('Favorites','favorites')">⭐ Favorites</button>
+  let p=document.getElementById("profile");p.innerHTML=`
+    <button class="btn" onclick="openInTab('Favorites','favorites')">⭐ Favorites</button>
     <button class="btn green" onclick="saveData()">💾 Save</button>
     <button class="btn" onclick="showProfilePopup()">👤 Profile</button>`;
 }
 
 function showProfilePopup(){
-  document.getElementById("popupContainer").innerHTML=`<div class="popup" onclick="closePopup(event)">
-    <div class="popup-box"><h3>Profile</h3>
-      <button class="btn green" onclick="openInTab('Login','login');closePopup()">Login</button>
-      <button class="btn" onclick="openInTab('Signup','signup');closePopup()">Sign Up</button>
-      <button class="btn" style="background:var(--error)" onclick="closePopup()">Cancel</button>
-    </div></div>`;
+  document.getElementById("popupContainer").innerHTML=`
+    <div class="popup" onclick="closePopup(event)">
+      <div class="popup-box">
+        <h3>Profile</h3>
+        <button class="btn green" onclick="openInTab('Login','login');closePopup()">Login</button>
+        <button class="btn" onclick="openInTab('Signup','signup');closePopup()">Sign Up</button>
+        <button class="btn" style="background:var(--error)" onclick="closePopup()">Cancel</button>
+      </div>
+    </div>`;
 }
 function closePopup(e){if(!e||e.target.classList.contains("popup"))document.getElementById("popupContainer").innerHTML="";}
 
-function openInTab(name,url){let existing=tabs.find(t=>t.name===name);if(existing){setActiveTab(existing.name);return;}tabs.push({name,url});setActiveTab(name);}
+function openInTab(name,url){
+  let existing=tabs.find(t=>t.name===name);
+  if(existing){setActiveTab(existing.name);return;}
+  tabs.push({name,url});
+  setActiveTab(name);
+}
 function setActiveTab(name){activeTab=name;refresh();}
 function closeTab(name){tabs=tabs.filter(t=>t.name!==name);setActiveTab("Home");}
 
 function toggleFullscreen(){fullscreen=!fullscreen;refresh();}
-function toggleFavorite(name){let all=[...games,...streams,...music,...socials,...customLinks];let g=all.find(x=>x.name===name);if(!g)return;
-  if(favorites.find(x=>x.name===name)){favorites=favorites.filter(x=>x.name!==name);}else{favorites.push(g);}refresh();}
-function addCustomLink(){let f=document.getElementById("customLinkIcon").files[0];let n=document.getElementById("customLinkName").value;let l=document.getElementById("customLinkUrl").value;
-  if(!n||!l)return;let img=f?URL.createObjectURL(f):"https://via.placeholder.com/60";customLinks.push({name:n,img,url:l});refresh();}
+function toggleFavorite(name){
+  let all=[...games,...streams,...music,...socials,...customLinks];
+  let g=all.find(x=>x.name===name);if(!g)return;
+  if(favorites.find(x=>x.name===name)){favorites=favorites.filter(x=>x.name!==name);}
+  else{favorites.push(g);}
+  refresh();
+}
+function addCustomLink(){
+  let f=document.getElementById("customLinkIcon").files[0];
+  let n=document.getElementById("customLinkName").value;
+  let l=document.getElementById("customLinkUrl").value;
+  if(!n||!l)return;
+  let img=f?URL.createObjectURL(f):"https://via.placeholder.com/60";
+  customLinks.push({name:n,img,url:l});refresh();
+}
 function openBlank(){openInTab("Blank","about:blank");}
 function deleteData(){if(confirm("Delete all data?")){localStorage.clear();location.reload();}}
 function saveData(){localStorage.setItem("grimData",JSON.stringify({games,streams,music,favorites,socials,customLinks}));alert("Saved!");}
-
-window.onload=()=>{let d=localStorage.getItem("grimData");if(d){let o=JSON.parse(d);
-  games=o.games||games;streams=o.streams||streams;music=o.music||music;favorites=o.favorites||[];socials=o.socials||socials;customLinks=o.customLinks||[];}
-  refresh();}
+window.onload=()=>{
+  let d=localStorage.getItem("grimData");
+  if(d){let o=JSON.parse(d);
+    games=o.games||games;streams=o.streams||streams;music=o.music||music;favorites=o.favorites||[];
+    socials=o.socials||socials;customLinks=o.customLinks||[];
+  }
+  refresh();
+}
 </script>
 </body>
 </html>
